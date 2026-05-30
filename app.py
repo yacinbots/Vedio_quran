@@ -8,88 +8,122 @@ app = Flask(__name__)
 
 PEXELS_API_KEY = "qNjzlhYlGozNW23Xlkzv7mPVjr7a2xzuOqvs1IqVraI6wU8QdDN9hDjC"
 
+
 # -----------------------------
-# PEXELS VIDEO
+# GET MULTIPLE AYAT
 # -----------------------------
-def get_video():
+def get_ayahs(surah, start, count=3):
+    ayahs = []
+    audios = []
+
+    for i in range(start, start + count):
+        url = f"https://api.alquran.cloud/v1/ayah/{surah}:{i}/ar.alafasy"
+        data = requests.get(url).json()["data"]
+
+        ayahs.append({
+            "text": data["text"],
+            "audio": data["audio"],
+            "number": data["numberInSurah"]
+        })
+
+        audios.append(data["audio"])
+
+    return ayahs, audios
+
+
+# -----------------------------
+# PEXELS VIDEOS (MULTI)
+# -----------------------------
+def get_videos(count=3):
     url = "https://api.pexels.com/videos/search"
+    headers = {"Authorization": PEXELS_API_KEY}
 
-    headers = {
-        "Authorization": PEXELS_API_KEY
-    }
+    params = {"query": "nature", "per_page": 15}
 
-    params = {
-        "query": "nature",
-        "per_page": 10
-    }
+    r = requests.get(url, headers=headers, params=params).json()
+    videos = r.get("videos", [])
 
-    r = requests.get(url, headers=headers, params=params)
-    data = r.json()
+    links = []
 
-    videos = data.get("videos", [])
-    if not videos:
-        return None
+    for v in random.sample(videos, min(count, len(videos))):
+        files = v.get("video_files", [])
+        if files:
+            links.append(files[0]["link"])
 
-    video = random.choice(videos)
-    files = video.get("video_files", [])
-
-    if not files:
-        return None
-
-    return files[0]["link"]
+    return links
 
 
 # -----------------------------
-# QURAN API
+# GENERATE VIDEO
 # -----------------------------
-def get_ayah():
-    url = "https://api.alquran.cloud/v1/ayah/1:1/ar.alafasy"
-    data = requests.get(url).json()["data"]
-
-    return data["text"], data["audio"]
-
-
-# -----------------------------
-# GENERATE
-# -----------------------------
-@app.route("/generate", methods=["POST"])
+@app.route("/generate", methods=["GET"])
 def generate():
 
     try:
-        text, audio = get_ayah()
-        video_url = get_video()
+        surah = request.args.get("surah", "1")
+        start = int(request.args.get("ayah", "1"))
+        count = int(request.args.get("count", "3"))
 
-        if not video_url:
-            return {"error": "no video found"}
+        ayahs, audios = get_ayahs(surah, start, count)
+        video_links = get_videos(count)
 
-        print("Downloading video...")
-        os.system(f"wget -q -O video.mp4 '{video_url}'")
+        # -----------------------------
+        # DOWNLOAD AUDIO (MERGE)
+        # -----------------------------
+        audio_files = []
 
-        print("Downloading audio...")
-        os.system(f"wget -q -O audio.mp3 '{audio}'")
+        for i, a in enumerate(audios):
+            fname = f"audio{i}.mp3"
+            os.system(f"wget -q -O {fname} '{a}'")
+            audio_files.append(fname)
 
-        output = "output.mp4"
+        # دمج الصوت
+        with open("audio_list.txt", "w") as f:
+            for a in audio_files:
+                f.write(f"file '{a}'\n")
 
-        # ⚠️ بدون drawtext (لتجنب crash)
-        cmd = f"""
-ffmpeg -y -i video.mp4 -i audio.mp3 -c:v libx264 -c:a aac -shortest {output}
+        os.system("ffmpeg -y -f concat -safe 0 -i audio_list.txt -c copy full_audio.mp3")
+
+        # -----------------------------
+        # DOWNLOAD VIDEOS
+        # -----------------------------
+        video_files = []
+
+        for i, v in enumerate(video_links):
+            fname = f"video{i}.mp4"
+            os.system(f"wget -q -O {fname} '{v}'")
+            video_files.append(fname)
+
+        # دمج الفيديوهات
+        with open("video_list.txt", "w") as f:
+            for v in video_files:
+                f.write(f"file '{v}'\n")
+
+        os.system("ffmpeg -y -f concat -safe 0 -i video_list.txt -c copy full_video.mp4")
+
+        # -----------------------------
+        # LOOP VIDEO IF SHORT
+        # -----------------------------
+        cmd = """
+ffmpeg -y -stream_loop 10 -i full_video.mp4 -i full_audio.mp3 -vf "
+drawtext=text='Quran Video':
+fontsize=40:fontcolor=white:
+x=(w-text_w)/2:y=50:box=1:boxcolor=black@0.5
+" -c:v libx264 -c:a aac -shortest output.mp4
 """
 
         os.system(cmd)
 
-        return send_file(output, as_attachment=True)
+        return send_file("output.mp4", as_attachment=True)
 
     except Exception:
         print(traceback.format_exc())
-        return {"error": "server crashed"}, 500
+        return {"error": "failed"}, 500
 
 
-# -----------------------------
-# HOME
-# -----------------------------
 @app.route("/")
 def home():
-    return "Quran Video API Running"
+    return "Multi Ayah Quran Video API"
 
 
 if __name__ == "__main__":
