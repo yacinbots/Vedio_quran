@@ -1,11 +1,9 @@
-
 from flask import Flask, request, send_file
 import requests
 import os
 import random
 import traceback
 import subprocess
-
 from PIL import Image, ImageDraw, ImageFont
 import arabic_reshaper
 from bidi.algorithm import get_display
@@ -70,34 +68,69 @@ def get_ayah(surah, ayah):
     }
 
 # -----------------------------
-# CREATE ARABIC OVERLAY IMAGE
+# CREATE ARABIC OVERLAY IMAGE (FIXED)
 # -----------------------------
 def create_overlay(text, footer):
     W, H = 1280, 720
 
+    # إنشاء صورة شفافة
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    font_main = ImageFont.truetype("Amiri-Regular.ttf", 54)
-    font_footer = ImageFont.truetype("Amiri-Regular.ttf", 32)
+    # تحميل الخط (تأكد من وجود الملف Amiri-Regular.ttf في نفس المجلد)
+    # يمكنك تحميله من هنا: https://github.com/aliftype/amiri/releases
+    try:
+        font_main = ImageFont.truetype("Amiri-Regular.ttf", 54)
+        font_footer = ImageFont.truetype("Amiri-Regular.ttf", 32)
+    except:
+        # إذا لم يكن الخط موجوداً، استخدم الخط الافتراضي
+        font_main = ImageFont.load_default()
+        font_footer = ImageFont.load_default()
 
-    text = get_display(arabic_reshaper.reshape(text))
-    footer = get_display(arabic_reshaper.reshape(footer))
+    # إعادة تشكيل النص العربي وعكس اتجاهه بشكل صحيح
+    reshaped_text = arabic_reshaper.reshape(text)
+    bidi_text = get_display(reshaped_text)
+    
+    reshaped_footer = arabic_reshaper.reshape(footer)
+    bidi_footer = get_display(reshaped_footer)
 
-    bbox = draw.textbbox((0, 0), text, font=font_main)
-    tw, th = bbox[2]-bbox[0], bbox[3]-bbox[1]
+    # حساب حجم النص الرئيسي يدوياً (لأن textbbox قد لا يعمل بشكل دقيق مع العربية)
+    # نستخدم طريقة textlength و getmask
+    try:
+        # طريقة أكثر دقة لحساب العرض والارتفاع
+        bbox = draw.textbbox((0, 0), bidi_text, font=font_main)
+        tw = bbox[2] - bbox[0]
+        th = bbox[3] - bbox[1]
+    except:
+        # طريقة بديلة إذا فشلت textbbox
+        tw = font_main.getlength(bidi_text) if hasattr(font_main, 'getlength') else len(bidi_text) * 30
+        th = font_main.size if hasattr(font_main, 'size') else 60
 
+    # توسيط النص الرئيسي
     x = (W - tw) // 2
     y = (H - th) // 2
 
-    draw.text((x, y), text, font=font_main, fill="white")
+    # رسم النص الرئيسي
+    draw.text((x, y), bidi_text, font=font_main, fill=(255, 255, 255, 255))
 
-    bbox2 = draw.textbbox((0, 0), footer, font=font_footer)
-    fw = bbox2[2]-bbox2[0]
+    # معالجة النص السفلي (التذييل)
+    try:
+        bbox_footer = draw.textbbox((0, 0), bidi_footer, font=font_footer)
+        fw = bbox_footer[2] - bbox_footer[0]
+        fh = bbox_footer[3] - bbox_footer[1]
+    except:
+        fw = font_footer.getlength(bidi_footer) if hasattr(font_footer, 'getlength') else len(bidi_footer) * 20
+        fh = font_footer.size if hasattr(font_footer, 'size') else 40
 
-    draw.text(((W-fw)//2, H-80), footer, font=font_footer, fill="white")
+    # رسم التذييل في الأسفل
+    footer_x = (W - fw) // 2
+    footer_y = H - fh - 30  # 30 بكسل من الأسفل
 
+    draw.text((footer_x, footer_y), bidi_footer, font=font_footer, fill=(255, 255, 255, 255))
+
+    # حفظ الصورة
     img.save("overlay.png")
+    print(f"[INFO] Overlay saved: text='{bidi_text}', footer='{bidi_footer}'")
 
 # -----------------------------
 # HOME
@@ -117,8 +150,13 @@ def generate():
         surah = request.args.get("surah", "1")
         ayah = request.args.get("ayah", "1")
 
+        print(f"[INFO] Generating for Surah {surah}, Ayah {ayah}")
+        
         info = get_ayah(surah, ayah)
+        print(f"[INFO] Ayah text: {info['text']}")
+        
         video_url = get_video()
+        print(f"[INFO] Video URL: {video_url}")
 
         if not video_url:
             return {"error": "no video"}, 500
@@ -128,14 +166,14 @@ def generate():
 
         files += ["video.mp4", "audio.mp3"]
 
-        # shorten video
+        # تحويل الفيديو إلى حجم مناسب
         subprocess.run([
             "ffmpeg", "-y",
             "-i", "video.mp4",
             "-t", "25",
-            "-vf", "scale=720:-2",
+            "-vf", "scale=1280:720",
             "small.mp4"
-        ])
+        ], capture_output=True, text=True)
 
         files.append("small.mp4")
 
@@ -144,6 +182,7 @@ def generate():
 
         files.append("overlay.png")
 
+        # دمج الفيديو والصوت والنص
         cmd = [
             "ffmpeg", "-y",
             "-stream_loop", "2",
@@ -159,21 +198,29 @@ def generate():
             "output.mp4"
         ]
 
-        subprocess.run(cmd, capture_output=True)
+        print(f"[INFO] Running FFmpeg command: {' '.join(cmd)}")
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            print(f"[ERROR] FFmpeg stderr: {result.stderr}")
+            return {"error": "ffmpeg failed", "details": result.stderr}, 500
 
         return send_file("output.mp4", as_attachment=True)
 
-    except Exception:
+    except Exception as e:
         print(traceback.format_exc())
-        return {"error": "failed"}, 500
+        return {"error": "failed", "message": str(e)}, 500
 
     finally:
-        for f in files + ["output.mp4"]:
+        # تنظيف الملفات المؤقتة
+        cleanup_files = ["video.mp4", "audio.mp3", "small.mp4", "overlay.png", "output.mp4"]
+        for f in cleanup_files:
             if os.path.exists(f):
                 try:
                     os.remove(f)
-                except:
-                    pass
+                    print(f"[INFO] Removed {f}")
+                except Exception as e:
+                    print(f"[WARN] Could not remove {f}: {e}")
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
