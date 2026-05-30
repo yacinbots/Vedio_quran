@@ -1,2 +1,5 @@
 flask
 requests
+pillow
+arabic-reshaper
+python-bidi
