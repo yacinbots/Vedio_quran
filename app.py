@@ -6,7 +6,7 @@ import traceback
 
 app = Flask(__name__)
 
-PEXELS_API_KEY = "qNjzlhYlGozNW23Xlkzv7mPVjr7a2xzuOqvs1IqVraI6wU8QdDN9hDjC"
+PEXELS_API_KEY = "YOUR_KEY_HERE"
 
 
 # -----------------------------
