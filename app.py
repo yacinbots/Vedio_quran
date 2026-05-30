@@ -8,7 +8,7 @@ app = Flask(__name__)
 # -----------------------------
 # PEXELS API
 # -----------------------------
-PEXELS_API_KEY = "PUT_YOUR_PEXELS_KEY_HERE"
+PEXELS_API_KEY = "qNjzlhYlGozNW23Xlkzv7mPVjr7a2xzuOqvs1IqVraI6wU8QdDN9hDjC"
 
 def get_video():
     url = "https://api.pexels.com/videos/search"
