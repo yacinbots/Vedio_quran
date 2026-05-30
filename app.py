@@ -2,14 +2,15 @@ from flask import Flask, request, send_file
 import requests
 import os
 import random
+import traceback
 
 app = Flask(__name__)
 
-# -----------------------------
-# PEXELS API
-# -----------------------------
 PEXELS_API_KEY = "qNjzlhYlGozNW23Xlkzv7mPVjr7a2xzuOqvs1IqVraI6wU8QdDN9hDjC"
 
+# -----------------------------
+# PEXELS VIDEO
+# -----------------------------
 def get_video():
     url = "https://api.pexels.com/videos/search"
 
@@ -22,23 +23,20 @@ def get_video():
         "per_page": 10
     }
 
-    response = requests.get(url, headers=headers, params=params)
-    data = response.json()
+    r = requests.get(url, headers=headers, params=params)
+    data = r.json()
 
     videos = data.get("videos", [])
-
     if not videos:
         return None
 
     video = random.choice(videos)
     files = video.get("video_files", [])
 
-    # نختار أفضل جودة
-    for f in files:
-        if f.get("quality") == "sd" or f.get("quality") == "hd":
-            return f.get("link")
+    if not files:
+        return None
 
-    return files[0].get("link") if files else None
+    return files[0]["link"]
 
 
 # -----------------------------
@@ -48,50 +46,51 @@ def get_ayah():
     url = "https://api.alquran.cloud/v1/ayah/1:1/ar.alafasy"
     data = requests.get(url).json()["data"]
 
-    text = data["text"]
-    audio = data["audio"]
-
-    return text, audio
+    return data["text"], data["audio"]
 
 
 # -----------------------------
-# GENERATE VIDEO
+# GENERATE
 # -----------------------------
 @app.route("/generate", methods=["POST"])
 def generate():
 
-    # جلب البيانات
-    text, audio = get_ayah()
-    video_url = get_video()
+    try:
+        text, audio = get_ayah()
+        video_url = get_video()
 
-    if not video_url:
-        return {"error": "no video found"}
+        if not video_url:
+            return {"error": "no video found"}
 
-    # تحميل الملفات
-    os.system(f"wget -O video.mp4 '{video_url}'")
-    os.system(f"wget -O audio.mp3 '{audio}'")
+        print("Downloading video...")
+        os.system(f"wget -q -O video.mp4 '{video_url}'")
 
-    output = "output.mp4"
+        print("Downloading audio...")
+        os.system(f"wget -q -O audio.mp3 '{audio}'")
 
-    # تنظيف النص (مهم لـ ffmpeg)
-    text_clean = text.replace("'", "").replace(":", "")
+        output = "output.mp4"
 
-    # FFmpeg تركيب الفيديو
-    cmd = f"""
-ffmpeg -y -i video.mp4 -i audio.mp3 -vf 
-"drawtext=text='{text_clean}':fontsize=45:fontcolor=white:
-x=(w-text_w)/2:y=(h-text_h)/2:
-box=1:boxcolor=black@0.5:boxborderw=20"
--c:v libx264 -c:a aac -shortest {output}
+        # ⚠️ بدون drawtext (لتجنب crash)
+        cmd = f"""
+ffmpeg -y -i video.mp4 -i audio.mp3 -c:v libx264 -c:a aac -shortest {output}
 """
 
-    os.system(cmd)
+        os.system(cmd)
 
-    return send_file(output, as_attachment=True)
+        return send_file(output, as_attachment=True)
+
+    except Exception:
+        print(traceback.format_exc())
+        return {"error": "server crashed"}, 500
 
 
 # -----------------------------
-# RUN
+# HOME
 # -----------------------------
+@app.route("/")
+def home():
+    return "Quran Video API Running"
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
