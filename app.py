@@ -5,8 +5,6 @@ import random
 import traceback
 import subprocess
 from PIL import Image, ImageDraw, ImageFont
-import arabic_reshaper
-from bidi.algorithm import get_display
 
 app = Flask(__name__)
 
@@ -68,7 +66,21 @@ def get_ayah(surah, ayah):
     }
 
 # -----------------------------
-# CREATE ARABIC OVERLAY IMAGE (FIXED)
+# FUNCTION TO REVERSE ARABIC TEXT CORRECTLY
+# -----------------------------
+def reverse_arabic_text(text):
+    """
+    تقوم بعكس النص العربي مع الحفاظ على شكل الحروف
+    """
+    # نقسم النص إلى كلمات
+    words = text.split()
+    # نعكس ترتيب الكلمات
+    reversed_words = words[::-1]
+    # نعيد تجميع النص
+    return ' '.join(reversed_words)
+
+# -----------------------------
+# CREATE OVERLAY WITH CORRECT ARABIC
 # -----------------------------
 def create_overlay(text, footer):
     W, H = 1280, 720
@@ -77,60 +89,80 @@ def create_overlay(text, footer):
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    # تحميل الخط (تأكد من وجود الملف Amiri-Regular.ttf في نفس المجلد)
-    # يمكنك تحميله من هنا: https://github.com/aliftype/amiri/releases
+    # تحميل الخط
     try:
-        font_main = ImageFont.truetype("Amiri-Regular.ttf", 54)
-        font_footer = ImageFont.truetype("Amiri-Regular.ttf", 32)
+        font_main = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf", 54)
     except:
-        # إذا لم يكن الخط موجوداً، استخدم الخط الافتراضي
-        font_main = ImageFont.load_default()
-        font_footer = ImageFont.load_default()
-
-    # إعادة تشكيل النص العربي وعكس اتجاهه بشكل صحيح
-    reshaped_text = arabic_reshaper.reshape(text)
-    bidi_text = get_display(reshaped_text)
+        try:
+            font_main = ImageFont.truetype("arial.ttf", 54)
+        except:
+            font_main = ImageFont.load_default()
     
-    reshaped_footer = arabic_reshaper.reshape(footer)
-    bidi_footer = get_display(reshaped_footer)
-
-    # حساب حجم النص الرئيسي يدوياً (لأن textbbox قد لا يعمل بشكل دقيق مع العربية)
-    # نستخدم طريقة textlength و getmask
     try:
-        # طريقة أكثر دقة لحساب العرض والارتفاع
-        bbox = draw.textbbox((0, 0), bidi_text, font=font_main)
+        font_footer = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf", 32)
+    except:
+        try:
+            font_footer = ImageFont.truetype("arial.ttf", 32)
+        except:
+            font_footer = ImageFont.load_default()
+
+    # IMPORTANT: عكس النص العربي يدوياً
+    # النص الأصلي: "بسم الله الرحمن الرحيم"
+    # بعد العكس: "الرحيم الرحمن الله بسم"
+    reversed_text = reverse_arabic_text(text)
+    reversed_footer = reverse_arabic_text(footer)
+    
+    print(f"[DEBUG] Original text: {text}")
+    print(f"[DEBUG] Reversed text: {reversed_text}")
+
+    # رسم خلفية سوداء شفافة للنص ليسهل رؤيته
+    # حساب حجم النص
+    try:
+        bbox = draw.textbbox((0, 0), reversed_text, font=font_main)
         tw = bbox[2] - bbox[0]
         th = bbox[3] - bbox[1]
     except:
-        # طريقة بديلة إذا فشلت textbbox
-        tw = font_main.getlength(bidi_text) if hasattr(font_main, 'getlength') else len(bidi_text) * 30
-        th = font_main.size if hasattr(font_main, 'size') else 60
+        tw = len(reversed_text) * 30
+        th = 60
 
-    # توسيط النص الرئيسي
+    # توسيط النص
     x = (W - tw) // 2
     y = (H - th) // 2
 
-    # رسم النص الرئيسي
-    draw.text((x, y), bidi_text, font=font_main, fill=(255, 255, 255, 255))
+    # رسم ظل للنص ليكون أوضح
+    # ظل أسود
+    draw.text((x-2, y-2), reversed_text, font=font_main, fill=(0, 0, 0, 255))
+    draw.text((x+2, y-2), reversed_text, font=font_main, fill=(0, 0, 0, 255))
+    draw.text((x-2, y+2), reversed_text, font=font_main, fill=(0, 0, 0, 255))
+    draw.text((x+2, y+2), reversed_text, font=font_main, fill=(0, 0, 0, 255))
+    
+    # النص الأساسي باللون الأبيض
+    draw.text((x, y), reversed_text, font=font_main, fill=(255, 255, 255, 255))
 
-    # معالجة النص السفلي (التذييل)
+    # رسم التذييل
     try:
-        bbox_footer = draw.textbbox((0, 0), bidi_footer, font=font_footer)
-        fw = bbox_footer[2] - bbox_footer[0]
-        fh = bbox_footer[3] - bbox_footer[1]
+        bbox_f = draw.textbbox((0, 0), reversed_footer, font=font_footer)
+        fw = bbox_f[2] - bbox_f[0]
+        fh = bbox_f[3] - bbox_f[1]
     except:
-        fw = font_footer.getlength(bidi_footer) if hasattr(font_footer, 'getlength') else len(bidi_footer) * 20
-        fh = font_footer.size if hasattr(font_footer, 'size') else 40
+        fw = len(reversed_footer) * 20
+        fh = 40
 
-    # رسم التذييل في الأسفل
     footer_x = (W - fw) // 2
-    footer_y = H - fh - 30  # 30 بكسل من الأسفل
+    footer_y = H - fh - 40
 
-    draw.text((footer_x, footer_y), bidi_footer, font=font_footer, fill=(255, 255, 255, 255))
+    # ظل للتذييل
+    draw.text((footer_x-2, footer_y-2), reversed_footer, font=font_footer, fill=(0, 0, 0, 255))
+    draw.text((footer_x+2, footer_y-2), reversed_footer, font=font_footer, fill=(0, 0, 0, 255))
+    draw.text((footer_x-2, footer_y+2), reversed_footer, font=font_footer, fill=(0, 0, 0, 255))
+    draw.text((footer_x+2, footer_y+2), reversed_footer, font=font_footer, fill=(0, 0, 0, 255))
+    
+    # التذييل الأساسي
+    draw.text((footer_x, footer_y), reversed_footer, font=font_footer, fill=(255, 255, 255, 255))
 
     # حفظ الصورة
     img.save("overlay.png")
-    print(f"[INFO] Overlay saved: text='{bidi_text}', footer='{bidi_footer}'")
+    print(f"[INFO] Overlay saved successfully")
 
 # -----------------------------
 # HOME
@@ -156,7 +188,6 @@ def generate():
         print(f"[INFO] Ayah text: {info['text']}")
         
         video_url = get_video()
-        print(f"[INFO] Video URL: {video_url}")
 
         if not video_url:
             return {"error": "no video"}, 500
@@ -166,7 +197,7 @@ def generate():
 
         files += ["video.mp4", "audio.mp3"]
 
-        # تحويل الفيديو إلى حجم مناسب
+        # معالجة الفيديو
         subprocess.run([
             "ffmpeg", "-y",
             "-i", "video.mp4",
@@ -182,28 +213,28 @@ def generate():
 
         files.append("overlay.png")
 
-        # دمج الفيديو والصوت والنص
+        # دمج كل شيء
         cmd = [
             "ffmpeg", "-y",
             "-stream_loop", "2",
             "-i", "small.mp4",
             "-i", "audio.mp3",
             "-i", "overlay.png",
-            "-filter_complex", "[0:v][2:v]overlay=0:0",
+            "-filter_complex", "[0:v][2:v]overlay=0:0:format=auto,format=yuv420p",
             "-c:v", "libx264",
             "-preset", "ultrafast",
             "-crf", "30",
             "-c:a", "aac",
             "-shortest",
+            "-pix_fmt", "yuv420p",
             "output.mp4"
         ]
 
-        print(f"[INFO] Running FFmpeg command: {' '.join(cmd)}")
         result = subprocess.run(cmd, capture_output=True, text=True)
         
         if result.returncode != 0:
-            print(f"[ERROR] FFmpeg stderr: {result.stderr}")
-            return {"error": "ffmpeg failed", "details": result.stderr}, 500
+            print(f"[ERROR] FFmpeg error: {result.stderr}")
+            return {"error": "ffmpeg failed"}, 500
 
         return send_file("output.mp4", as_attachment=True)
 
@@ -212,15 +243,13 @@ def generate():
         return {"error": "failed", "message": str(e)}, 500
 
     finally:
-        # تنظيف الملفات المؤقتة
-        cleanup_files = ["video.mp4", "audio.mp3", "small.mp4", "overlay.png", "output.mp4"]
-        for f in cleanup_files:
+        # تنظيف الملفات
+        for f in ["video.mp4", "audio.mp3", "small.mp4", "overlay.png", "output.mp4"]:
             if os.path.exists(f):
                 try:
                     os.remove(f)
-                    print(f"[INFO] Removed {f}")
-                except Exception as e:
-                    print(f"[WARN] Could not remove {f}: {e}")
+                except:
+                    pass
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
