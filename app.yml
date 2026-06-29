@@ -20,7 +20,7 @@ jobs:
 
       - name: Configure Auth Token
         run: |
-          ngrok config add-authtoken YOUR_NGROK_TOKEN
+          ngrok config add-authtoken 2gzCXiehyX6Dvdjyam6CeA3P7wN_4ZRSp9hHWtNdUrEMfW7A5
 
       - name: Start Local Server
         run: |
