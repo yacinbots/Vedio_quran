@@ -1,0 +1,37 @@
+name: NGROK-TUNNEL
+
+on:
+  workflow_dispatch:
+
+jobs:
+  tunnel:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install ngrok
+        run: |
+          curl -s https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz -o ngrok.tgz
+          tar -xzf ngrok.tgz
+          chmod +x ngrok
+          sudo mv ngrok /usr/local/bin/
+
+      - name: Configure Auth Token
+        run: |
+          ngrok config add-authtoken 2gzCXiehyX6Dvdjyam6CeA3P7wN_4ZRSp9hHWtNdUrEMfW7A5
+
+      - name: Start Local Server
+        run: |
+          python3 -m http.server 8080 &
+          sleep 5
+
+      - name: Start Tunnel
+        run: |
+          nohup ngrok http 8080 > /dev/null 2>&1 &
+          sleep 10
+
+      - name: Show URL
+        run: |
+          curl http://127.0.0.1:4040/api/tunnels
